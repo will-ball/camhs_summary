@@ -1,0 +1,171 @@
+---
+title: "Child and Adolescent Mental Health Service (CAMHS) Referrals Open Data for Scotland"
+description: |
+  A summary analysis of trends 2015-2021 with specific focus on NHS Grampian
+author:
+  - name: "William Patrick Ball"
+    url: https://wpball.com
+    affiliation: Aberdeen Centre for Health Data Science, University of Aberdeen, Scotland
+    affiliation_url: https://www.abdn.ac.uk/achds/
+    orcid_id: 0000-0002-2722-7040
+date: "`r Sys.Date()`"
+citation_url: https://will-ball.github.io/camhs_summary/
+output:
+  distill::distill_article:
+    code_folding: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+options(scipen = 999)
+```
+
+## Summary
+
+This work provides a basic summary of trends in open data relating to CAMHS referrals in NHS Grampian and wider Scotland.
+
+### Note about code
+
+If you want to replicate or expand on anything I've done on this page you can copy the code snippets below.
+
+```{r libraries, message = FALSE, warning = FALSE}
+library(tidyverse)
+library(janitor) # clean_names
+library(tidylog) # logging of tidyverse functions
+library(vroom) # loading data
+library(lubridate) # for easy date manipulation
+library(lemon) # for facet_rep_wrap
+library(scales)
+library(gt)
+```
+
+## CAMHS Referral Data
+
+We are looking at monthly counts of referrals to CAMHS by Health Board. Data comes from the Public Health Scotland Open Data portal. This goes back to 2012, but we are looking specifically at the period between January 2015 and the end of 2021.
+
+```{r data, message = FALSE, warning = FALSE}
+lookup <- vroom("https://www.opendata.nhs.scot/dataset/9f942fdb-e59e-44f5-b534-d6e17229cc7b/resource/652ff726-e676-4a20-abda-435b98dd7bdc/download/hb14_hb19.csv") %>% 
+  clean_names() %>% 
+  select(hb, hb_name)
+
+refs <- vroom("https://www.opendata.nhs.scot/dataset/f9bab568-501e-49d3-a0a4-0b9a7578b0de/resource/d31d8e7c-fbcb-4e4b-a6a1-3b9c4f3b14a0/download/camhs-referrals.csv") %>% 
+  clean_names() %>% 
+  left_join(lookup, by = "hb") %>% 
+  mutate(month = ym(month),
+         year = year(month),
+         hb_name = replace_na(hb_name, "Scotland")) %>% 
+  filter(year >= "2015")
+
+rm(lookup)
+```
+
+
+### Referral counts
+
+Here we see that annual CAMHS referrals in NHS Grampian have been reasonably stable until 2020 which was impacted by the first UK COVID-19 Lockdown when referrals dropped dramatically. The annual totals for the whole of Scotland increased each year until 2020. The monthly picture highlights where the drop in 2020 came (the dashed line indicates the start of lockdown) and how much of an increase there has been since.
+
+```{r chunk 1, layout="l-body-outset", fig.width = 5, fig.height = 2, dpi = 300, message = FALSE, warning = FALSE}
+# Set theme
+theme_set(theme_classic())
+theme_update(panel.grid.major.y = element_line(),
+             plot.title.position = "plot",
+             plot.caption.position = "plot",
+             strip.background = element_blank(),
+             legend.box.background = element_rect(fill = "transparent", colour = NA),
+             legend.background = element_rect(fill = "transparent", colour = NA))
+
+# By year for Scotland and NHS Grampian
+refs %>% 
+  filter(hb_name %in% c("NHS Grampian", "Scotland")) %>% 
+  group_by(year, hb_name) %>% 
+  summarise(referrals = sum(referrals_received)) %>% 
+  ggplot(aes(x = year, y = referrals)) +
+  geom_bar(fill = "firebrick", stat = "identity") +
+  scale_x_continuous(breaks = seq(2015,2021,1), guide = guide_axis(angle = 45)) +
+  scale_y_continuous(limits = c(0,NA), breaks = pretty_breaks(6), label = comma_format(accuracy = 1)) +
+  labs(x = "", y = "Referrals\n") +
+  facet_rep_wrap(~ hb_name, scales = "free_y", repeat.tick.labels = F)+
+  theme(text = element_text(size = 8))
+
+refs %>% 
+  filter(hb_name %in% c("NHS Grampian", "Scotland")) %>% 
+  group_by(month, hb_name) %>% 
+  summarise(referrals = sum(referrals_received)) %>% 
+  ggplot(aes(x = month, y = referrals)) +
+  geom_vline(xintercept = as.numeric(as_date("2020-03-26")), colour = "black", linetype = "dashed") +
+  geom_point(size = .7, color = "firebrick") +
+  scale_x_date(date_breaks = "year", date_labels = "%Y", guide = guide_axis(angle = 45)) +
+  scale_y_continuous(limits = c(0,NA), breaks = pretty_breaks(6), label = comma_format(accuracy = 1)) +
+  labs(x = "", y = "Referrals\n") +
+  facet_rep_wrap(~ hb_name, scales = "free_y", repeat.tick.labels = F)+
+  theme(text = element_text(size = 8))
+```
+
+### Change over time
+
+The table below quantifies change in referrals from 2015 to 2021 for each health board in Scotland. We can see that most saw an increase, although not all and the scale of that increase varies. NHS Grampian saw the 3rd largest increase in Scotland which was above the average of all health boards.
+
+```{r, layout = "l-body-outset"}
+# Change
+refs %>% 
+  group_by(year, hb_name) %>% 
+  summarise(referrals = sum(referrals_received)) %>% 
+  ungroup() %>% 
+  filter(year %in% c("2015", "2021")) %>% 
+  group_by(hb_name) %>% 
+  summarise(refs_2015 = referrals[year == 2015],
+            refs_2021 = referrals[year == 2021],
+            change = (refs_2021 - refs_2015) / refs_2015) %>% 
+  arrange(desc(change)) %>% 
+  filter(!is.na(change)) %>%
+  mutate(change = percent(change, accuracy = .1)) %>% 
+  gt() %>%  
+  tab_spanner(
+    label = "Referrals",
+    columns = c(refs_2015, refs_2021)) %>% 
+  cols_label(
+    hb_name = "Health Board",
+    refs_2015 = "2015",
+    refs_2021 = "2021",
+    change = "Change"
+  ) %>% 
+  fmt_number(
+    columns = c(refs_2015, refs_2021),
+    decimals = 0,
+    sep_mark = ","
+  ) %>%
+  cols_width(
+    c(refs_2015, refs_2021, change) ~ px(150)) %>% 
+  cols_align(
+    align = "right",
+    columns = change
+  )
+```
+
+
+### The rest of Scotland
+
+As you can see from the table above, there is a mixed picture in other health boards around the country. Nearly all of the health boards saw increases in referrals but these ranged from just under 5% to nearly 45%. Looking just at these annual totals hides part of what has happened. There are various patterns around Scotland both before and after the impact of COVID. Worryingly there appears to have been a background trend for growing numbers of referrals which in many places has accelerated after the impacts of early 2020 COVID-19 lockdown.
+
+```{r chunk 2, layout="l-body-outset", fig.width = 5, fig.height = 8, dpi = 300, message = FALSE, warning = FALSE}
+# Monthly by HB
+refs %>%
+  ggplot(aes(x = month, y = referrals_received)) +
+  geom_vline(xintercept = as.numeric(as_date("2020-03-26")), colour = "black", linetype = "dashed") +
+  geom_point(size = .5, color = "firebrick") +
+  scale_x_date(date_breaks = "year", date_labels = "%Y", guide = guide_axis(angle = 45)) +
+  scale_y_continuous(limits = c(0,NA), breaks = pretty_breaks(6), label = comma_format(accuracy = 1)) +
+  labs(x = "", y = "Referrals\n") +
+  facet_rep_wrap(~ hb_name, scales = "free_y", repeat.tick.labels = T, nrow = 5, labeller = labeller(hb_name = label_wrap_gen(20)))+
+  theme(strip.text.x = element_text(size = 6),
+        text = element_text(size = 6))
+```
+
+## Acknowledgments {.appendix}
+
+The data used for this analysis was provided as [Open Data by Public Health Scotland]("https://www.opendata.nhs.scot/dataset/child-and-adolescent-mental-health-waiting-times") under the UK Open Government License. The code was written in R using [Distill for R Markdown]("https://rstudio.github.io/distill/") in RStudio.
+
+## Licensing {.appendix}
+
+This code is licensed under a CC-BY-NC-ND 4.0 License
